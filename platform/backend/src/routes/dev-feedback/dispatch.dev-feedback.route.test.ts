@@ -1,8 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
 import { HttpResponse, http } from "msw";
 import config from "@/config";
-import db, { schema } from "@/database";
 import { agentRuntimeManager } from "@/k8s/agent-runtime";
 import {
   A2ATaskModel,
@@ -14,18 +12,13 @@ import {
 } from "@/models";
 import AgentRunInputModel from "@/models/agent-run-input";
 import DevFeedbackConfigModel from "@/models/dev-feedback-config";
-import DevFeedbackSubmissionModel from "@/models/dev-feedback-submission";
-import TaskModel from "@/models/task";
 import { kubernetesAgentRuntimeBackendDriver as backend } from "@/services/agent-runtime/backends/kubernetes";
 import type { AgentRunCompletion } from "@/services/agent-runtime/backends/types";
-import { devFeedbackService } from "@/services/dev-feedback";
-import { handleDevFeedbackDispatch } from "@/task-queue/handlers/dev-feedback-dispatch-handler";
 import { afterEach, describe, expect, test, vi } from "@/test";
 import { setupTestCacheManager } from "@/test/cache-manager";
 import { FakeSlack } from "@/test/fake-slack";
 import { useMswServer } from "@/test/msw";
 import { useRouteTestApp } from "@/test/route-test-app";
-import { CreateDevFeedbackCommentBodySchema } from "@/types/dev-feedback";
 import { drainBackgroundWork } from "@/utils/background-work";
 import devFeedbackRoutes from "./dev-feedback.routes";
 
@@ -39,267 +32,174 @@ describe("feedback delivery and direct dispatch", () => {
   const ctx = useRouteTestApp(devFeedbackRoutes);
   const server = useMswServer();
 
-  test("replays a submitted report without reposting and drops post-only media from the ledger", async () => {
+  test("post-only setup preserves Slack delivery without creating a runtime task", async () => {
     const slack = new FakeSlack("CFEEDBACK");
     await slack.configureAsDevFeedbackChannel();
     server.use(...slack.handlers());
-    const payload = body();
-    const first = await ctx.app.inject({
+    const response = await ctx.app.inject({
       method: "POST",
       url: "/api/dev-feedback/comments",
-      payload,
+      payload: body(),
     });
-    const retry = await ctx.app.inject({
-      method: "POST",
-      url: "/api/dev-feedback/comments",
-      payload,
-    });
-    expect(first.statusCode).toBe(200);
-    expect(retry.statusCode).toBe(200);
-    expect(retry.json().id).toBe(first.json().id);
+    expect(response.statusCode).toBe(200);
+    expect(response.json().dispatch).toBeUndefined();
     expect(slack.messages).toHaveLength(1);
-    const stored = await DevFeedbackSubmissionModel.findById(
-      payload.submissionId,
-    );
-    expect(stored?.actorUserId).toBe(ctx.user.id);
-    expect(stored?.organizationId).toBe(ctx.organizationId);
-    expect(stored?.body.screenshot).toBeUndefined();
-    const changed = await ctx.app.inject({
-      method: "POST",
-      url: "/api/dev-feedback/comments",
-      payload: { ...payload, text: "Replacement text" },
-    });
-    expect(changed.statusCode).toBe(409);
-    expect(slack.messages).toHaveLength(1);
+    expect(response.json().permalink).toContain(slack.channel);
   });
 
-  test("reconciles a lost Slack acknowledgement using the saved posting bot and submission id", async () => {
-    const slack = new FakeSlack("CFEEDBACK");
-    await slack.configureAsDevFeedbackChannel();
-    server.use(...slack.handlers());
-    server.use(
-      http.post(
-        "https://slack.com/api/chat.postMessage",
-        async ({ request }) => {
-          const params = new URLSearchParams(await request.text());
-          slack.addMessage({
-            text: params.get("text") ?? "",
-            botId: "B1",
-            metadata: JSON.parse(params.get("metadata") ?? "{}"),
-          });
-          return HttpResponse.json({ ok: false, error: "operation_timeout" });
-        },
-      ),
-    );
-    const payload = body({ screenshot: undefined });
-    const first = await ctx.app.inject({
-      method: "POST",
-      url: "/api/dev-feedback/comments",
-      payload,
-    });
-    expect(first.statusCode).toBe(500);
-    const retry = await ctx.app.inject({
-      method: "POST",
-      url: "/api/dev-feedback/comments",
-      payload,
-    });
-    expect(retry.statusCode).toBe(200);
-    expect(retry.json().id).toBe(slack.messages[0].ts);
-    expect(slack.messages).toHaveLength(1);
-  });
-
-  test("keeps Slack success when dispatch fails and exposes its status only to the authenticated submitter", async ({
+  test("a requester without Agent access gets partial success after the Slack post", async ({
+    makeMember,
+    makeInternalAgent,
     makeUser,
   }) => {
     const slack = new FakeSlack("CFEEDBACK");
     await slack.configureAsDevFeedbackChannel();
+    server.use(...slack.handlers());
+    await makeMember(ctx.user.id, ctx.organizationId, { role: "member" });
+    const owner = await makeUser();
+    const agent = await makeInternalAgent({
+      organizationId: ctx.organizationId,
+      authorId: owner.id,
+      access: "personal",
+      runtime: {
+        image: "example.test/feedback:1",
+        command: ["feedback-worker"],
+        inferenceProtocol: "openai_responses",
+        backend: "kubernetes",
+        steerMode: "pipe",
+        privileged: false,
+        resources: null,
+        environment: null,
+        credentials: null,
+        ttlHours: null,
+        idleTimeoutMinutes: null,
+      },
+    });
+    const binding = await ChatOpsChannelBindingModel.create({
+      organizationId: ctx.organizationId,
+      provider: "slack",
+      channelId: slack.channel,
+      workspaceId: "T1",
+      agentId: agent.id,
+    });
     await DevFeedbackConfigModel.save({
       botId: "A1",
       channelId: slack.channel,
       channelName: "ui-feedback",
       organizationId: ctx.organizationId,
-      agentId: randomUUID(),
+      agentId: agent.id,
+      bindingId: binding.id,
+      workspaceId: "T1",
     });
-    server.use(...slack.handlers());
-    const payload = body();
-    const posted = await ctx.app.inject({
+    const response = await ctx.app.inject({
       method: "POST",
       url: "/api/dev-feedback/comments",
-      payload,
+      payload: body(),
     });
-    expect(posted.statusCode).toBe(200);
-    await expect(
-      handleDevFeedbackDispatch({ reportId: payload.submissionId }),
-    ).rejects.toThrow();
-    const retry = await ctx.app.inject({
-      method: "POST",
-      url: "/api/dev-feedback/comments",
-      payload,
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      id: slack.messages[0].ts,
+      permalink: expect.stringContaining(slack.channel),
+      dispatch: { status: "failed", runId: null, message: expect.any(String) },
     });
-    expect(retry.statusCode).toBe(200);
-    expect(retry.json().dispatch.status).toBe("failed");
     expect(slack.messages).toHaveLength(1);
-    const own = await ctx.app.inject({
-      method: "GET",
-      url: "/api/dev-feedback/comments?route=/llm/limits",
-    });
-    expect(own.json()[0].dispatch.status).toBe("failed");
-    ctx.user = await makeUser();
-    const other = await ctx.app.inject({
-      method: "GET",
-      url: "/api/dev-feedback/comments?route=/llm/limits",
-    });
-    expect(other.json()[0].dispatch).toBeUndefined();
-    const spoofedRetry = await ctx.app.inject({
-      method: "POST",
-      url: "/api/dev-feedback/comments",
-      payload,
-    });
-    expect(spoofedRetry.statusCode).toBe(409);
-    expect(slack.messages).toHaveLength(1);
+    expect(
+      (
+        await A2ATaskModel.listForActor({
+          actorKind: "user",
+          actorId: ctx.user.id,
+          agentIds: [agent.id],
+          organizationId: ctx.organizationId,
+          pageSize: 10,
+        })
+      ).totalSize,
+    ).toBe(0);
   });
 
-  test("unreconciled reports rotate out of a bounded delivery batch so later reports recover", async () => {
+  test("setup refuses an Agent that does not own the selected pinned Slack bot", async ({
+    makeMember,
+    makeInternalAgent,
+  }) => {
+    const slack = new FakeSlack("CFEEDBACK");
+    await slack.connectChatOpsBot();
+    server.use(...slack.handlers());
+    await makeMember(ctx.user.id, ctx.organizationId, { role: "admin" });
+    const agent = await makeInternalAgent({
+      organizationId: ctx.organizationId,
+      authorId: ctx.user.id,
+      runtime: {
+        image: "example.test/feedback:1",
+        command: ["feedback-worker"],
+        inferenceProtocol: "openai_responses",
+        backend: "kubernetes",
+        steerMode: "pipe",
+        privileged: false,
+        resources: null,
+        environment: null,
+        credentials: null,
+        ttlHours: null,
+        idleTimeoutMinutes: null,
+      },
+    });
+    await ChatOpsConfigModel.saveSlackAgentBot({
+      agentId: randomUUID(),
+      appId: "A1",
+      botToken: "xoxb-test",
+      signingSecret: "test-signature",
+      enabled: true,
+      connectionMode: "webhook",
+    });
+    const response = await ctx.app.inject({
+      method: "PUT",
+      url: "/api/dev-feedback/setup",
+      payload: { botId: "A1", channelId: slack.channel, agentId: agent.id },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.message).toContain(
+      "owns the selected Slack bot",
+    );
+    expect(await DevFeedbackConfigModel.get()).toBeNull();
+    expect(slack.messages).toHaveLength(0);
+  });
+
+  test("does not summon an Agent when Slack refuses the root post", async () => {
     const slack = new FakeSlack("CFEEDBACK");
     await slack.configureAsDevFeedbackChannel();
-    server.use(...slack.handlers());
-    const reports = [];
-    for (let index = 0; index < 21; index++) {
-      const payload = CreateDevFeedbackCommentBodySchema.parse(
-        body(
-          index === 20
-            ? { submissionId: "ffffffff-ffff-4fff-8fff-ffffffffffff" }
-            : {},
-        ),
-      );
-      const saved = await DevFeedbackSubmissionModel.create({
-        id: payload.submissionId as string,
-        organizationId: ctx.organizationId,
-        actorUserId: ctx.user.id,
-        authorName: ctx.user.name,
-        requestHash: "fixture",
-        body: payload,
-        target: {
-          botId: "A1",
-          channelId: slack.channel,
-          channelName: "ui-feedback",
-        },
-      });
-      if (!saved.report) throw new Error("Missing feedback fixture");
-      reports.push(saved.report);
-    }
-    const recoverable = reports[20];
-    const delivered = slack.addMessage({
-      text: recoverable.body.text,
-      botId: "B1",
-      metadata: {
-        event_type: "archestra_dev_feedback_comment",
-        event_payload: {
-          submissionId: recoverable.id,
-          authorName: ctx.user.name,
-        },
-      },
-    });
-    // Age untouched freshly inserted rows: a crash can leave PostgreSQL's initial timestamp here.
-    const sweepStartedAt = new Date();
-    vi.spyOn(Date, "now").mockReturnValue(sweepStartedAt.getTime() + 180_000);
-    await devFeedbackService.reconcilePendingSubmissions();
-    for (const failed of reports.slice(0, 20)) {
-      expect(
-        (
-          await DevFeedbackSubmissionModel.findById(failed.id)
-        )?.updatedAt.getTime(),
-      ).toBeGreaterThanOrEqual(sweepStartedAt.getTime());
-    }
-    expect(
-      (await DevFeedbackSubmissionModel.findById(recoverable.id))?.rootTs,
-    ).toBeNull();
-    await devFeedbackService.reconcilePendingSubmissions();
-    expect(
-      await DevFeedbackSubmissionModel.findById(recoverable.id),
-    ).toMatchObject({ rootTs: delivered.ts, deliveryStatus: "posted" });
-    expect(slack.messages).toHaveLength(1);
-  });
-
-  test.for([
-    false,
-    true,
-  ])("a final queue-worker crash settles an abandoned dispatch without starting a replacement (task linked=%s)", async (linked) => {
-    config.devFeedback.enabled = true;
-    const payload = CreateDevFeedbackCommentBodySchema.parse(body());
-    const reportId = payload.submissionId as string;
-    await DevFeedbackSubmissionModel.create({
-      id: reportId,
+    const agentId = randomUUID();
+    await DevFeedbackConfigModel.save({
+      botId: "A1",
+      channelId: slack.channel,
+      channelName: "ui-feedback",
       organizationId: ctx.organizationId,
-      actorUserId: ctx.user.id,
-      authorName: ctx.user.name,
-      requestHash: "fixture",
-      body: payload,
-      target: {
-        botId: "A1",
-        channelId: "CFEEDBACK",
-        channelName: "ui-feedback",
-        agentId: randomUUID(),
-        organizationId: ctx.organizationId,
-      },
+      agentId,
     });
-    await DevFeedbackSubmissionModel.recordRoot({
-      id: reportId,
-      rootTs: "1700000000.000001",
-      permalink: null,
-      screenshot: "uploaded",
-    });
-    await DevFeedbackSubmissionModel.finishDelivery(reportId, {
-      screenshot: "uploaded",
-      clip: "absent",
-    });
-    await db
-      .update(schema.tasksTable)
-      .set({ attempt: 7 })
-      .where(eq(schema.tasksTable.taskType, "dev_feedback_dispatch"));
-    const job = await TaskModel.dequeue(["dev_feedback_dispatch"]);
-    expect(job?.attempt).toBe(8);
-    const claim = await DevFeedbackSubmissionModel.claimDispatch(reportId);
-    if (!claim || !job) throw new Error("Missing claimed dispatch fixture");
-    const taskId = linked ? randomUUID() : null;
-    if (taskId)
-      expect(
-        await DevFeedbackSubmissionModel.linkTask(
-          reportId,
-          taskId,
-          claim.updatedAt,
-        ),
-      ).toBe(true);
-    await db
-      .update(schema.devFeedbackSubmissionsTable)
-      .set({ updatedAt: new Date(Date.now() - 300_000) })
-      .where(eq(schema.devFeedbackSubmissionsTable.id, reportId));
-    await db
-      .update(schema.tasksTable)
-      .set({ heartbeatAt: sql`NOW() - interval '5 minutes'` })
-      .where(eq(schema.tasksTable.id, job.id));
-    expect(await TaskModel.resetStuckTasks(120_000)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          taskType: "dev_feedback_dispatch",
-          status: "dead",
-        }),
-      ]),
+    server.use(...slack.handlers());
+    server.use(
+      http.post("https://slack.com/api/chat.postMessage", () =>
+        HttpResponse.json({ ok: false, error: "channel_not_found" }),
+      ),
     );
-    await devFeedbackService.reconcilePendingSubmissions();
-    expect(await DevFeedbackSubmissionModel.findById(reportId)).toMatchObject({
-      dispatchStatus: linked ? "uncertain" : "failed",
-      runtimeTaskId: taskId,
-      lastError: expect.stringContaining("Posted to Slack"),
+    const response = await ctx.app.inject({
+      method: "POST",
+      url: "/api/dev-feedback/comments",
+      payload: body({ screenshot: undefined }),
     });
-    await devFeedbackService.reconcilePendingSubmissions();
-    expect(await DevFeedbackSubmissionModel.findById(reportId)).toMatchObject({
-      dispatchStatus: linked ? "uncertain" : "failed",
-      runtimeTaskId: taskId,
-    });
+    expect(response.statusCode).toBe(500);
+    expect(slack.messages).toHaveLength(0);
+    expect(
+      (
+        await A2ATaskModel.listForActor({
+          actorKind: "user",
+          actorId: ctx.user.id,
+          agentIds: [agentId],
+          organizationId: ctx.organizationId,
+          pageSize: 10,
+        })
+      ).totalSize,
+    ).toBe(0);
   });
 
-  test("a worker with no inbound Slack provider launches once with the human report and media, then replies in its root thread", async ({
+  test("directly summons the runtime with authenticated context and media, then replies in the Slack thread", async ({
     makeMember,
     makeInternalAgent,
     makeSecret,
@@ -421,37 +321,13 @@ describe("feedback delivery and direct dispatch", () => {
       payload,
     });
     expect(posted.statusCode).toBe(200);
-    expect(posted.json().dispatch.status).toBe("pending");
-    await Promise.allSettled([
-      handleDevFeedbackDispatch({ reportId: payload.submissionId }),
-      handleDevFeedbackDispatch({ reportId: payload.submissionId }),
-    ]);
-    await expect.poll(() => launch.mock.calls.length).toBe(1);
-    const linked = await DevFeedbackSubmissionModel.findById(
-      payload.submissionId,
-    );
-    const taskId = linked?.runtimeTaskId as string;
+    expect(posted.json().dispatch.status).toBe("started");
+    const taskId = posted.json().dispatch.runId as string;
     expect(taskId).toEqual(expect.any(String));
+    await expect.poll(() => launch.mock.calls.length).toBe(1);
     await expect
       .poll(async () => !!(await AgentRunModel.findByTaskId(taskId)))
       .toBe(true);
-    // A worker can die after the durable runtime appears but before recording dispatch success.
-    await db
-      .update(schema.devFeedbackSubmissionsTable)
-      .set({
-        dispatchStatus: "launching",
-        updatedAt: new Date(Date.now() - 300_000),
-      })
-      .where(eq(schema.devFeedbackSubmissionsTable.id, payload.submissionId));
-    await db
-      .update(schema.tasksTable)
-      .set({ status: "dead" })
-      .where(eq(schema.tasksTable.taskType, "dev_feedback_dispatch"));
-    await devFeedbackService.reconcilePendingSubmissions();
-    expect(
-      (await DevFeedbackSubmissionModel.findById(payload.submissionId))
-        ?.dispatchStatus,
-    ).toBe("started");
     const run = await AgentRunModel.findByTaskId(taskId);
     expect(run).toMatchObject({
       actorUserId: ctx.user.id,
@@ -473,6 +349,8 @@ describe("feedback delivery and direct dispatch", () => {
         ?.fileData.toString(),
     ).toBe("recording-bytes");
     expect(stage).toHaveBeenCalledOnce();
+    expect(slack.uploads).toHaveLength(2);
+    expect(slack.uploads[1].threadTs).toBe(posted.json().id);
     const launchSpec = launch.mock.calls[0][0];
     expect(
       launchSpec.secretEnv.ARCHESTRA_AGENT_RUNTIME_SYSTEM_PROMPT,
@@ -490,10 +368,6 @@ describe("feedback delivery and direct dispatch", () => {
     expect(JSON.stringify(launch.mock.calls[0][0])).toContain(
       "Follow the configured feedback triage workflow before creating work.",
     );
-    expect(
-      (await DevFeedbackSubmissionModel.findById(payload.submissionId))?.body
-        .screenshot,
-    ).toBeUndefined();
     finish({ outcome: "succeeded" });
     await expect
       .poll(async () => (await A2ATaskModel.findById(taskId))?.state)
@@ -509,14 +383,12 @@ describe("feedback delivery and direct dispatch", () => {
     expect(slack.messages.filter((message) => !message.threadTs)).toHaveLength(
       1,
     );
-    await handleDevFeedbackDispatch({ reportId: payload.submissionId });
     expect(launch).toHaveBeenCalledOnce();
   });
 });
 
 function body(overrides: Record<string, unknown> = {}) {
   return {
-    submissionId: randomUUID(),
     route: "/llm/limits",
     url: "https://frontend.example.test/llm/limits",
     selector: "main > section",

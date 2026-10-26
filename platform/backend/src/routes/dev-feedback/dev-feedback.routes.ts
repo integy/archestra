@@ -102,13 +102,8 @@ const devFeedbackRoutes: FastifyPluginAsyncZod = async (fastify) => {
         response: constructResponseSchema(z.array(DevFeedbackCommentSchema)),
       },
     },
-    async ({ query, user, organizationId }, reply) =>
-      reply.send(
-        await devFeedbackService.listComments(query.route, {
-          userId: user.id,
-          organizationId,
-        }),
-      ),
+    async ({ query }, reply) =>
+      reply.send(await devFeedbackService.listComments(query.route)),
   );
 
   fastify.post(

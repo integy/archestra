@@ -1,15 +1,6 @@
 "use client";
 
-import {
-  ArrowUp,
-  Check,
-  ExternalLink,
-  Loader2,
-  MessageSquare,
-  TriangleAlert,
-  X,
-} from "lucide-react";
-import Link from "next/link";
+import { ArrowUp, Check, ExternalLink, Loader2, X } from "lucide-react";
 import {
   type ReactNode,
   useEffect,
@@ -20,7 +11,6 @@ import {
 } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { InlineNotice, InlineNoticeText } from "@/components/ui/inline-notice";
 import { Textarea } from "@/components/ui/textarea";
 import { annotateFrame, toBase64 } from "@/lib/dev-feedback/capture";
 import {
@@ -31,7 +21,6 @@ import {
   useDevFeedbackReplies,
   useResolveDevFeedbackComment,
 } from "@/lib/dev-feedback/dev-feedback.query";
-import { devFeedbackDispatchMessage } from "@/lib/dev-feedback/dispatch-status";
 import { formatCompactRelativeTime } from "@/lib/utils/date-time";
 
 export type DraftComment = {
@@ -67,8 +56,6 @@ export function DraftPopover(props: {
   const [text, setText] = useState("");
   const [attachClip, setAttachClip] = useState(true);
   const [sending, setSending] = useState(false);
-  const [submittedBody, setSubmittedBody] =
-    useState<CreateDevFeedbackCommentBody | null>(null);
   const createComment = useCreateDevFeedbackComment();
   const willAttachClip = attachClip && props.clip !== null;
   const framePreview = useMemo(
@@ -80,11 +67,6 @@ export function DraftPopover(props: {
     if (!text.trim() || sending) return;
     setSending(true);
     try {
-      if (submittedBody) {
-        await createComment.mutateAsync(submittedBody);
-        onDone({ clipAttached: submittedBody.clip !== undefined });
-        return;
-      }
       const screenshot = draft.frame
         ? await annotateFrame({
             frame: draft.frame,
@@ -103,7 +85,6 @@ export function DraftPopover(props: {
         };
       }
       const body: CreateDevFeedbackCommentBody = {
-        submissionId: crypto.randomUUID(),
         route,
         url: window.location.href,
         selector: draft.selector,
@@ -117,7 +98,6 @@ export function DraftPopover(props: {
         screenshot: screenshot ?? undefined,
         clip,
       };
-      setSubmittedBody(body);
       await createComment.mutateAsync(body);
       onDone({ clipAttached: clip !== undefined });
     } catch {
@@ -142,7 +122,7 @@ export function DraftPopover(props: {
         autoFocus
         rows={2}
         value={text}
-        disabled={sending || submittedBody !== null}
+        disabled={sending}
         placeholder="Add a comment"
         className="mt-2 min-h-0 resize-none border-0 px-0 shadow-none focus-visible:ring-0"
         onChange={(event) => setText(event.target.value)}
@@ -154,17 +134,6 @@ export function DraftPopover(props: {
         }}
       />
       {props.clip && attachClip && <ClipPreview blob={props.clip.blob} />}
-      {submittedBody && createComment.isError && (
-        <div className="mt-2">
-          <InlineNotice>
-            <TriangleAlert />
-            <span className="font-medium">Delivery not confirmed</span>
-            <InlineNoticeText>
-              Retry to check this report before posting again.
-            </InlineNoticeText>
-          </InlineNotice>
-        </div>
-      )}
       <div className="mt-2 flex items-center justify-between gap-2">
         {props.clip ? (
           <label
@@ -174,7 +143,7 @@ export function DraftPopover(props: {
             <Checkbox
               id="dev-feedback-attach-clip"
               checked={attachClip}
-              disabled={sending || submittedBody !== null}
+              disabled={sending}
               onCheckedChange={(checked) => setAttachClip(checked === true)}
             />
             <span>{`Attach clip (${formatDuration(props.clip.durationMs)})`}</span>
@@ -186,7 +155,7 @@ export function DraftPopover(props: {
         )}
         <Button
           size="icon-xs"
-          aria-label={submittedBody ? "Retry feedback" : "Post to Slack"}
+          aria-label="Post to Slack"
           disabled={!text.trim() || sending}
           onClick={() => void submit()}
         >
@@ -237,34 +206,6 @@ export function CommentPopover(props: {
         </Button>
       </div>
       <p className="mt-2 whitespace-pre-wrap text-sm">{comment.text}</p>
-      {comment.dispatch && (
-        <div className="mt-2">
-          <InlineNotice
-            variant={
-              comment.dispatch.status === "failed" ||
-              comment.dispatch.status === "uncertain"
-                ? "warning"
-                : "info"
-            }
-          >
-            <MessageSquare />
-            <span className="font-medium">Agent review</span>
-            <InlineNoticeText>
-              {devFeedbackDispatchMessage(comment.dispatch)}
-            </InlineNoticeText>
-            {comment.dispatch.runId && (
-              <Button size="xs" variant="ghost" asChild>
-                <Link
-                  href={`/chat/runs/${encodeURIComponent(comment.dispatch.runId)}`}
-                >
-                  Open run
-                </Link>
-              </Button>
-            )}
-          </InlineNotice>
-        </div>
-      )}
-
       <div className="mt-3 max-h-48 space-y-2 overflow-y-auto border-t pt-2">
         {isLoading && (
           <p className="text-muted-foreground text-xs">Loading replies…</p>

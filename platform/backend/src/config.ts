@@ -3875,8 +3875,8 @@ const config = {
   /**
    * Internal UI feedback overlay for the team's own deployments: pin a comment
    * on an element and post it, with a screenshot and an optional screen clip,
-   * to a Slack channel. A database ledger tracks delivery and optional agent
-   * dispatch. The posting bot, channel and reviewing agent are picked in the UI.
+   * to a Slack channel, then optionally summon an agent in that thread. The
+   * posting bot, channel and reviewing agent are picked in the UI.
    */
   devFeedback: {
     enabled: process.env.ARCHESTRA_DEV_FEEDBACK_ENABLED === "true",
@@ -3891,7 +3891,6 @@ const config = {
     domain: process.env.ARCHESTRA_NGROK_DOMAIN || "",
   },
   chatops: {
-    inboundEnabled: process.env.ARCHESTRA_CHATOPS_INBOUND_ENABLED !== "false",
     // Provider-to-server delivery can use a public listener while the UI and
     // browser OAuth callback stay on the frontend origin.
     webhookBaseUrl: parseChatopsWebhookBaseUrl(

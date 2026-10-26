@@ -1314,8 +1314,6 @@ See [Slack](/docs/agents/triggers-and-channels/slack) for setup.
 - **`ARCHESTRA_CHATOPS_SLACK_APP_ID`** - Slack App ID, used for direct-message deep links.
   - Default: unset (no deep links)
 
-- **`ARCHESTRA_CHATOPS_INBOUND_ENABLED`** - Initializes incoming messaging providers when `true` (the default). Set to `false` for outbound-only delivery without starting inbound listeners or managing Slack app manifests during startup. Outbound delivery still checks the configured bot, workspace and actor permissions.
-
 ### Telegram
 
 See [Telegram](/docs/agents/triggers-and-channels/telegram) for setup. Telegram needs no public URL.

@@ -16,9 +16,8 @@ import {
   vi,
 } from "vitest";
 import { useHasPermissions } from "@/lib/auth/auth.query";
-import { useDevFeedbackComments } from "@/lib/dev-feedback/dev-feedback.query";
 import { makeAgent } from "@/mocks/data/agents";
-import { CommentPopover, DraftPopover } from "./dev-feedback-popovers";
+import { DraftPopover } from "./dev-feedback-popovers";
 import { DevFeedbackSetupPanel } from "./dev-feedback-setup";
 
 vi.mock("@/lib/auth/auth.query");
@@ -124,29 +123,27 @@ it("saves a runtime agent for feedback review and can switch back to post only",
   );
 });
 
-it("retries the identical report after an uncertain response and keeps Slack success when review fails", async () => {
+it.each([
+  "started",
+  "failed",
+] as const)("closes a posted report when agent review %s without submitting it again", async (status) => {
   const requests: Record<string, unknown>[] = [];
+  const permalink = "https://example.slack.com/archives/C1/p1729426801000100";
   server.use(
     http.post(`${origin}/api/dev-feedback/comments`, async ({ request }) => {
       const body = (await request.json()) as Record<string, unknown>;
       requests.push(body);
-      if (requests.length === 1) {
-        return HttpResponse.json(
-          { error: { message: "Delivery not confirmed", type: "api_error" } },
-          { status: 503 },
-        );
-      }
       return HttpResponse.json({
         ...body,
         id: "1729426801.000100",
         authorName: "Reporter",
         replyCount: 0,
-        permalink: "https://example.slack.com/archives/C1/p1729426801000100",
+        permalink,
         createdAt: "2026-10-26T12:00:00.000Z",
         dispatch: {
-          status: "failed",
-          runId: null,
-          message: "Connect the reviewing agent before retrying agent review.",
+          status,
+          runId: status === "started" ? runtimeAgent.id : null,
+          message: status === "failed" ? "Connect the reviewing agent." : null,
         },
       });
     }),
@@ -177,71 +174,26 @@ it("retries the identical report after an uncertain response and keeps Slack suc
     "Keep this context",
   );
   await user.click(screen.getByRole("button", { name: "Post to Slack" }));
-  await screen.findByText("Delivery not confirmed");
-  expect(screen.getByPlaceholderText("Add a comment")).toBeDisabled();
-  expect(onDone).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: "Retry feedback" }));
   await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
-  expect(requests).toHaveLength(2);
-  expect(requests[0].submissionId).toMatch(
-    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-  );
-  expect(requests[1]).toEqual(requests[0]);
+  expect(requests).toHaveLength(1);
+  expect(requests[0]).toMatchObject({
+    text: "Keep this context",
+    route: "/agents",
+    selector: "main",
+    label: "Page",
+  });
+  expect(requests[0]).not.toHaveProperty("submissionId");
   expect(toast.success).toHaveBeenCalledWith(
     "Posted to Slack",
     expect.objectContaining({
-      description: "Connect the reviewing agent before retrying agent review.",
+      description:
+        status === "started"
+          ? "Agent review started. Its response will appear in the Slack thread."
+          : "Connect the reviewing agent. Open the Slack thread and ask the configured agent manually. Do not repost the feedback.",
+      action: expect.objectContaining({ label: "Open" }),
     }),
   );
+  expect(
+    screen.queryByRole("button", { name: "Retry feedback" }),
+  ).not.toBeInTheDocument();
 });
-
-it("refreshes pending feedback and shows a later dispatch failure in the report", async () => {
-  let reads = 0;
-  server.use(
-    http.get(`${origin}/api/dev-feedback/comments`, () => {
-      reads += 1;
-      return HttpResponse.json([
-        {
-          id: "1729426801.000100",
-          route: "/agents",
-          selector: "main",
-          label: "Page",
-          elementX: 0.5,
-          elementY: 0.5,
-          viewportX: 0.5,
-          viewportY: 0.5,
-          text: "Preserve the full report",
-          authorName: "Reporter",
-          replyCount: 0,
-          permalink: null,
-          createdAt: "2026-10-26T12:00:00.000Z",
-          dispatch: {
-            status: reads === 1 ? "pending" : "failed",
-            runId: null,
-            message: reads === 1 ? null : "Connect the reviewing agent.",
-          },
-        },
-      ]);
-    }),
-    http.get(`${origin}/api/dev-feedback/comments/:id/replies`, () =>
-      HttpResponse.json([]),
-    ),
-  );
-  withClient(<LiveComment />);
-  await screen.findByText("Agent review is queued for this Slack thread.");
-  await screen.findByText(
-    "Connect the reviewing agent.",
-    {},
-    { timeout: 5000 },
-  );
-  expect(reads).toBeGreaterThanOrEqual(2);
-  expect(screen.getByText("Preserve the full report")).toBeVisible();
-});
-
-function LiveComment() {
-  const comments = useDevFeedbackComments({ route: "/agents", enabled: true });
-  const comment = comments.data?.[0];
-  return comment ? (
-    <CommentPopover comment={comment} x={100} y={100} onClose={() => {}} />
-  ) : null;
-}

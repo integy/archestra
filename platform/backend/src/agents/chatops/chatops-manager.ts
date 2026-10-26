@@ -67,7 +67,7 @@ import type {
 } from "@/types";
 import { AgentRuntimeCredentialsRequiredError } from "@/types/agent-runtime";
 import type { ChatOpsChannelBinding } from "@/types/chatops-channel-binding";
-import type { DevFeedbackSubmission } from "@/types/dev-feedback-submission";
+import type { DevFeedbackReport } from "@/types/dev-feedback";
 import { LlmProviderAuthRequiredError } from "@/utils/llm-provider-auth-error";
 import { resolveConversationLlmSelectionForAgent } from "@/utils/llm-resolution";
 import { stripThinkingBlocks } from "@/utils/strip-thinking-blocks";
@@ -177,10 +177,9 @@ export class ChatOpsManager {
 
   /** A server-authenticated feedback submission is addressed explicitly, without inventing a Slack sender. */
   async dispatchFeedbackReport(params: {
-    report: DevFeedbackSubmission;
+    report: DevFeedbackReport;
     attachments: A2AAttachment[];
-    onTaskCreated: (taskId: string) => Promise<void>;
-  }): Promise<ChatOpsProcessingResult> {
+  }): Promise<ChatOpsProcessingResult & { taskId?: string }> {
     const { report } = params;
     const target = report.target;
     if (
@@ -255,7 +254,7 @@ export class ChatOpsManager {
       );
     await provider.initializeOutbound(target.workspaceId);
     const handoff = buildDevFeedbackHandoff(report);
-    // This envelope is transport routing only; the authenticated actor comes from the durable submission.
+    // This envelope is transport routing only; the authenticated actor comes from the HTTP request.
     return this.startAgentRuntimeRun({
       agent,
       binding,
@@ -283,8 +282,7 @@ export class ChatOpsManager {
       cleanedMessageText: report.body.text,
       sessionSetup: handoff.sessionSetup,
       sendReply: false,
-      onTaskCreated: async (taskId) => {
-        await params.onTaskCreated(taskId);
+      onTaskCreated: async () => {
         await markChannelThreadActive({
           provider: "slack",
           channelId: target.channelId,
@@ -658,7 +656,6 @@ export class ChatOpsManager {
   }
 
   async initialize(): Promise<void> {
-    if (!config.chatops.inboundEnabled) return;
     // Seed DB from env vars on first run (no-op if DB already has config)
     await this.seedConfigFromEnvVars();
 
@@ -2837,7 +2834,7 @@ export class ChatOpsManager {
     sendReply: boolean;
     userId: string;
     onTaskCreated?: (taskId: string) => Promise<void>;
-  }): Promise<ChatOpsProcessingResult> {
+  }): Promise<ChatOpsProcessingResult & { taskId?: string }> {
     const {
       agent,
       binding,
@@ -3046,7 +3043,7 @@ export class ChatOpsManager {
         "[ChatOps] Started Agent Runtime run",
       );
       return nativeConversation
-        ? { success: true, agentResponse: "" }
+        ? { success: true, agentResponse: "", taskId: task.id }
         : await acknowledge(
             `Started a run for this. I will post the result in this thread when it finishes: ${agentRunUrl(workspaceRetained ? workspace.id : task.id)}`,
           );

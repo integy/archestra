@@ -8,7 +8,6 @@ type PeriodicTaskDefinition = {
 };
 
 const PERIODIC_TASK_DEFINITIONS: PeriodicTaskDefinition[] = [
-  { taskType: "dev_feedback_reconcile", intervalSeconds: 60, payload: {} },
   {
     taskType: "interaction_user_activity_rebuild",
     intervalSeconds: 30,

@@ -23,9 +23,8 @@ class TaskModel {
    */
   static async dequeue(
     laneTaskTypes: readonly TaskType[],
-    taskIds?: readonly string[],
   ): Promise<Task | null> {
-    if (laneTaskTypes.length === 0 || taskIds?.length === 0) return null;
+    if (laneTaskTypes.length === 0) return null;
     const types = sql.join(
       laneTaskTypes.map((type) => sql`${type}`),
       sql`, `,
@@ -36,14 +35,6 @@ class TaskModel {
         WHERE status = 'pending'
           AND scheduled_for <= NOW()
           AND task_type IN (${types})
-          ${
-            taskIds
-              ? sql`AND id IN (${sql.join(
-                  taskIds.map((id) => sql`${id}::uuid`),
-                  sql`, `,
-                )})`
-              : sql``
-          }
         ORDER BY created_at
         LIMIT 1
         FOR UPDATE SKIP LOCKED
@@ -155,10 +146,7 @@ class TaskModel {
    */
   static async resetStuckTasks(
     timeoutMs: number,
-    taskIds?: readonly string[],
-    taskType?: TaskType,
   ): Promise<StuckTaskTransition[]> {
-    if (taskIds?.length === 0) return [];
     const timeoutSeconds = timeoutMs / 1000;
     const timeoutError = "Task timed out (worker stopped heartbeating)";
 
@@ -168,15 +156,6 @@ class TaskModel {
           last_error = ${timeoutError},
           completed_at = NOW()
       WHERE status = 'processing'
-        ${
-          taskIds
-            ? sql`AND id IN (${sql.join(
-                taskIds.map((id) => sql`${id}::uuid`),
-                sql`, `,
-              )})`
-            : sql``
-        }
-        ${taskType ? sql`AND task_type = ${taskType}` : sql``}
         AND COALESCE(heartbeat_at, started_at) < NOW() - make_interval(secs => ${timeoutSeconds})
         AND attempt >= max_attempts
         AND NOT (
@@ -200,15 +179,6 @@ class TaskModel {
             END
           ) * INTERVAL '1 millisecond'
       WHERE status = 'processing'
-        ${
-          taskIds
-            ? sql`AND id IN (${sql.join(
-                taskIds.map((id) => sql`${id}::uuid`),
-                sql`, `,
-              )})`
-            : sql``
-        }
-        ${taskType ? sql`AND task_type = ${taskType}` : sql``}
         AND COALESCE(heartbeat_at, started_at) < NOW() - make_interval(secs => ${timeoutSeconds})
         AND (
           attempt < max_attempts

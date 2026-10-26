@@ -2,7 +2,7 @@ import { expect, test } from "./fixtures";
 
 const agentId = "00000000-0000-4000-8000-000000000001";
 
-test("feedback setup selects an agent and a captured report retains its identity when retried", async ({
+test("feedback setup selects an agent and a captured report starts review", async ({
   page,
   mswControl,
   request,
@@ -110,8 +110,22 @@ test("feedback setup selects an agent and a captured report retains its identity
   await mswControl.use({
     method: "post",
     url: "/api/dev-feedback/comments",
-    status: 503,
-    body: { error: { message: "Delivery not confirmed", type: "api_error" } },
+    body: {
+      id: "1729426801.000100",
+      route: "/agents",
+      selector: "main",
+      label: "Page",
+      elementX: 0.5,
+      elementY: 0.5,
+      viewportX: 0.5,
+      viewportY: 0.5,
+      text: "Preserve the full report",
+      authorName: "Reporter",
+      replyCount: 0,
+      permalink: null,
+      createdAt: "2026-10-26T12:00:00.000Z",
+      dispatch: { status: "started", runId: agentId, message: null },
+    },
   });
   const submit = page.waitForRequest(
     (r) =>
@@ -121,37 +135,13 @@ test("feedback setup selects an agent and a captured report retains its identity
     .getByRole("button", { name: "Post to Slack", exact: true })
     .click();
   const body = (await submit).postDataJSON();
-  expect(body.submissionId).toMatch(
-    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-  );
   expect(body.text).toBe("Preserve the full report");
   expect(body.screenshot.mimeType).toBe("image/jpeg");
   expect(body.screenshot.base64.length).toBeGreaterThan(100);
   await expect(
-    page.getByRole("alert").filter({ hasText: "Retry to check this report" }),
-  ).toBeVisible();
-  await expect(page.getByPlaceholder("Add a comment")).toBeDisabled();
-  await mswControl.use({
-    method: "post",
-    url: "/api/dev-feedback/comments",
-    body: {
-      ...body,
-      id: "1729426801.000100",
-      authorName: "Reporter",
-      replyCount: 0,
-      permalink: null,
-      createdAt: "2026-10-26T12:00:00.000Z",
-      dispatch: { status: "pending", runId: null, message: null },
-    },
-  });
-  const retry = page.waitForRequest(
-    (r) =>
-      r.method() === "POST" && r.url().endsWith("/api/dev-feedback/comments"),
-  );
-  await page.getByRole("button", { name: "Retry feedback" }).click();
-  expect((await retry).postDataJSON()).toEqual(body);
-  await expect(
-    page.getByText("Agent review is queued for this Slack thread."),
+    page.getByText(
+      "Agent review started. Its response will appear in the Slack thread.",
+    ),
   ).toBeVisible();
   await expect(page.getByPlaceholder("Add a comment")).toHaveCount(0);
 });

@@ -865,7 +865,7 @@ class SlackProvider implements ChatOpsProvider {
     this.botId = identity.bot_id;
   }
 
-  /** Prepare outbound thread delivery in a worker without configuring the app or opening inbound listeners. */
+  /** Prepare outbound thread delivery without configuring the app or opening inbound listeners. */
   async initializeOutbound(workspaceId: string): Promise<void> {
     if (this.client && this.teamId === workspaceId) return;
     const client = this.runtimeNoticeClient();

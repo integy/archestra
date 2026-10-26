@@ -30,7 +30,7 @@ export const DevFeedbackCommentSchema = DevFeedbackAnchorSchema.extend({
   createdAt: z.string(),
   dispatch: z
     .object({
-      status: z.enum(["pending", "started", "failed", "uncertain"]),
+      status: z.enum(["started", "failed"]),
       runId: z.string().nullable(),
       message: z.string().nullable(),
     })
@@ -46,8 +46,6 @@ export const DevFeedbackReplySchema = z.object({
 
 export const CreateDevFeedbackCommentBodySchema =
   DevFeedbackAnchorSchema.extend({
-    /** Keep this id when retrying a submission whose response was lost. */
-    submissionId: z.string().uuid().optional(),
     text: z.string().trim().min(1).max(4000),
     /** The concrete page URL the comment was made on. */
     url: z.string().max(2048),
@@ -119,3 +117,20 @@ function DevFeedbackFileSchema<const T extends readonly [string, ...string[]]>(
     base64: z.string().min(1),
   });
 }
+
+/** In-memory handoff after Slack confirms the original report. */
+export type DevFeedbackReport = {
+  id: string;
+  organizationId: string;
+  actorUserId: string;
+  authorName: string;
+  body: CreateDevFeedbackCommentBody;
+  target: DevFeedbackSetup;
+  rootTs: string;
+  permalink: string | null;
+  createdAt: Date;
+  media: {
+    screenshot: "absent" | "uploaded" | "unavailable";
+    clip: "absent" | "uploaded" | "unavailable";
+  };
+};

@@ -48479,7 +48479,7 @@ export type GetDevFeedbackCommentsResponses = {
         permalink: string | null;
         createdAt: string;
         dispatch?: {
-            status: 'pending' | 'started' | 'failed' | 'uncertain';
+            status: 'started' | 'failed';
             runId: string | null;
             message: string | null;
         };
@@ -48497,7 +48497,6 @@ export type CreateDevFeedbackCommentData = {
         elementY: number;
         viewportX: number;
         viewportY: number;
-        submissionId?: string;
         text: string;
         url: string;
         viewport: string;
@@ -48602,7 +48601,7 @@ export type CreateDevFeedbackCommentResponses = {
         permalink: string | null;
         createdAt: string;
         dispatch?: {
-            status: 'pending' | 'started' | 'failed' | 'uncertain';
+            status: 'started' | 'failed';
             runId: string | null;
             message: string | null;
         };

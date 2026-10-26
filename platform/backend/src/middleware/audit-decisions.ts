@@ -745,11 +745,6 @@ export const AUDIT_DECISIONS = {
     reason:
       "task-owned runtime inputs; the execution start event records the file count without logging file names or content",
   },
-  devFeedbackSubmissionsTable: {
-    audited: false,
-    reason:
-      "internal feedback delivery and dispatch ledger; report media must not enter audit payloads",
-  },
   agentRunSharesTable: {
     audited: false,
     reason:

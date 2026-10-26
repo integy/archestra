@@ -1,7 +1,6 @@
 import { archestraApiSdk, type archestraApiTypes } from "@archestra/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { devFeedbackDispatchMessage } from "@/lib/dev-feedback/dispatch-status";
 import { handleApiError, throwOnApiError, toApiError } from "@/lib/utils/api";
 
 export type DevFeedbackComment =
@@ -92,12 +91,6 @@ export function useDevFeedbackComments(params: {
     },
     enabled: params.enabled,
     staleTime: 20 * 1000,
-    refetchInterval: (query) =>
-      query.state.data?.some(
-        (comment) => comment.dispatch?.status === "pending",
-      )
-        ? 2000
-        : false,
   });
 }
 
@@ -132,7 +125,9 @@ export function useCreateDevFeedbackComment() {
       queryClient.invalidateQueries({ queryKey: devFeedbackKeys.all });
       toast.success("Posted to Slack", {
         description: comment.dispatch
-          ? devFeedbackDispatchMessage(comment.dispatch)
+          ? comment.dispatch.status === "started"
+            ? "Agent review started. Its response will appear in the Slack thread."
+            : `${comment.dispatch.message ?? "Agent review could not start."} Open the Slack thread and ask the configured agent manually. Do not repost the feedback.`
           : undefined,
         action: comment.permalink
           ? {

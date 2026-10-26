@@ -2,24 +2,11 @@ import config from "@/config";
 import logger from "@/logging";
 import { TaskModel } from "@/models";
 import * as metrics from "@/observability/metrics";
-import type {
-  InsertTask,
-  Task,
-  TaskHandler,
-  TaskLane,
-  TaskType,
-} from "@/types";
+import type { InsertTask, Task, TaskHandler, TaskLane } from "@/types";
 import { TASK_LANES } from "@/types";
 import PERIODIC_TASK_DEFINITIONS from "./periodic-tasks";
 
 export class TaskQueueService {
-  constructor(
-    private readonly scope?: {
-      taskType: TaskType;
-      taskIds: readonly string[];
-    },
-  ) {}
-
   private handlers = new Map<string, TaskHandler>();
   private pollIntervalId: ReturnType<typeof setInterval> | null = null;
   // Global in-flight set (used for shutdown drain, lane-agnostic).
@@ -40,14 +27,6 @@ export class TaskQueueService {
   registerHandler(taskType: string, handler: TaskHandler): void {
     this.handlers.set(taskType, handler);
     logger.debug({ taskType }, "[TaskQueue] Handler registered");
-  }
-
-  /** Prompt an already-running worker to poll for newly committed jobs. */
-  wake(): void {
-    if (!this.pollIntervalId || this.stopping) return;
-    void this.poll().catch((error) =>
-      logger.warn({ error }, "[TaskQueue] Wake failed; polling will retry"),
-    );
   }
 
   async enqueue(params: {
@@ -250,11 +229,7 @@ export class TaskQueueService {
     if (Date.now() - this.lastStuckSweepAt >= STUCK_SWEEP_INTERVAL_MS) {
       this.lastStuckSweepAt = Date.now();
       // Reset tasks whose worker stopped heartbeating
-      const swept = await TaskModel.resetStuckTasks(
-        STUCK_TASK_TIMEOUT_MS,
-        this.scope?.taskIds,
-        this.scope?.taskType,
-      );
+      const swept = await TaskModel.resetStuckTasks(STUCK_TASK_TIMEOUT_MS);
       if (swept.length > 0) {
         metrics.taskQueue.reportStuckTasksReset(swept.length);
         logger.warn(
@@ -277,10 +252,7 @@ export class TaskQueueService {
     for (const lane of LANES) {
       const cap = this.laneCap(lane);
       while (!this.stopping && this.laneCounts[lane] < cap) {
-        const types = this.scope
-          ? TASK_LANES[lane].filter((type) => type === this.scope?.taskType)
-          : TASK_LANES[lane];
-        const task = await TaskModel.dequeue(types, this.scope?.taskIds);
+        const task = await TaskModel.dequeue(TASK_LANES[lane]);
         if (!task) break; // lane empty — move on to the next lane
 
         // Track immediately so a concurrent stopWorker sees this task.
@@ -390,8 +362,6 @@ export class TaskQueueService {
     try {
       await handler(task.payload as Record<string, unknown>, {
         taskId: task.id,
-        attempt: task.attempt,
-        maxAttempts: task.maxAttempts,
       });
       await TaskModel.complete(task.id);
       const durationSeconds = (Date.now() - startTime) / 1000;

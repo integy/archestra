@@ -1,9 +1,9 @@
-import type { DevFeedbackSubmission } from "@/types/dev-feedback-submission";
+import type { DevFeedbackReport } from "@/types/dev-feedback";
 
 /** Shared handoff copy; agent and channel configuration own the workflow. */
 export function buildDevFeedbackHandoff(
   report: Pick<
-    DevFeedbackSubmission,
+    DevFeedbackReport,
     "id" | "authorName" | "body" | "rootTs" | "permalink" | "media"
   >,
 ): { sessionSetup: string; message: string } {

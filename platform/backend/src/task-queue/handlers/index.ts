@@ -1,7 +1,6 @@
 import { openappaBatteriesService } from "@/openappa/batteries";
 import { threadStates } from "@/openappa/thread-state";
 import { deleteExpiredUnenforcedRecords } from "@/openappa/unenforced";
-import { devFeedbackService } from "@/services/dev-feedback";
 import {
   checkDueAppaGithubSyncs,
   syncAppaGithubPolicy,
@@ -21,7 +20,6 @@ import { handleConnectorSync } from "./connector-sync-handler";
 import { handleContentEncryptionBackfill } from "./content-encryption-backfill-handler.ee";
 // biome-ignore lint/style/noRestrictedImports: dual-licensed, gated at boot by the retention license gate
 import { handleContentRetentionCleanup } from "./content-retention-cleanup-handler.ee";
-import { handleDevFeedbackDispatch } from "./dev-feedback-dispatch-handler";
 import { handleInteractionSessionPreviewBackfill } from "./interaction-session-preview-backfill-handler";
 import { handleInteractionUserActivityRebuild } from "./interaction-user-activity-rebuild-handler";
 import { handleKbBm25StatsRefresh } from "./kb-bm25-stats-refresh-handler";
@@ -35,13 +33,6 @@ import { handleSkillGithubSync } from "./skill-github-sync-handler";
 import { handleSkillPublicationBackfill } from "./skill-publication-backfill-handler";
 
 export function registerTaskHandlers(taskQueueService: TaskQueueService): void {
-  taskQueueService.registerHandler(
-    "dev_feedback_dispatch",
-    handleDevFeedbackDispatch,
-  );
-  taskQueueService.registerHandler("dev_feedback_reconcile", () =>
-    devFeedbackService.reconcilePendingSubmissions(),
-  );
   taskQueueService.registerHandler(
     "agent_run_attention_notice",
     handleAgentRunAttentionNotice,
