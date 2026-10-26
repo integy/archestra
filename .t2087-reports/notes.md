@@ -14,7 +14,7 @@
 
 - 418cd2f5c fix(proxy): govern OpenAI image generations on the provider route (phase 3; previously raw passthrough). New test `routes/openai-images.route.test.ts`.
 - final commit: reports copied under `.t2087-reports/` (screened by authorship: an automated grep scan was policy-blocked).
-- Branch pushed to `origin piercypixel/t-2087-media-router` at the owner's mid-turn request (no PR).
+- Push to origin was requested mid-turn but NOT done: the required approval review went unanswered. Branch is local only.
 
 ## #9461/#9462/#9463
 Superseded by #9498 at line level (≥99.6% of significant added lines present in f789c7cdf). See gap-matrix.md.
