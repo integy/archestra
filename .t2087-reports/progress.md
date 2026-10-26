@@ -1,0 +1,20 @@
+- 2026-10-26T12:21:54Z created branch piercypixel/t-2087-media-router at f789c7cdf; cloned LiteLLM v1.106.4 @ ea7ca16dbc3904d9e59a9505f379a2ca3091821f (latest non-prerelease GitHub release; '-stable' suffixed tags stop at v1.83.14-stable.patch.3); evidence: reports/t-2087/litellm
+- 2026-10-26T12:23:59Z phase2: applying #9465 router diff (d9212729..d796cbf3) minus generated files/openapi/screenshots
+- 2026-10-26T12:24:18Z running pnpm install --frozen-lockfile; evidence: evidence/pnpm-install.log
+- 2026-10-26T12:24:39Z backend type-check after #9465 port; evidence: evidence/tc-backend-1.log
+- 2026-10-26T12:37:00Z pnpm codegen; evidence: evidence/codegen-1.log
+- 2026-10-26T12:38:46Z pnpm type-check (all); evidence: evidence/type-check-2.log
+- 2026-10-26T12:41:51Z vitest: ported #9465 test files; evidence: evidence/vitest-router-media.log
+- 2026-10-26T12:42:51Z vitest: adjacent proxy media/router files; evidence: evidence/vitest-proxy-adjacent.log
+- 2026-10-26T12:45:04Z shared tests; evidence: evidence/vitest-shared.log
+- 2026-10-26T12:45:19Z lint (all workspaces); evidence: evidence/lint-1.log
+- 2026-10-26T12:45:50Z backend knip (dev+production); evidence: evidence/knip-backend-1.log
+- 2026-10-26T12:46:50Z patch rewritten at 7705bf3d6: 22efcfcb6c7b0e9b48ebdcbf86fd85f2a53f76bb282ef69345baabf78d0041ac  t-2087.patch
+- 2026-10-26T12:46:50Z commit 7705bf3d6 phase2 port (tests 135+366+shared 1048 pass, type-check/lint/knip pass); evidence: evidence/vitest-*.log
+- 2026-10-26T13:05:31Z patch rewritten at 7705bf3d6: 22efcfcb6c7b0e9b48ebdcbf86fd85f2a53f76bb282ef69345baabf78d0041ac  t-2087.patch
+- 2026-10-26T13:06:35Z SDK install approval unanswered: not installing openai py 3.37.0/js 7.43.0; using repo-pinned openai JS 6.29.0 (backend/node_modules) via existing *.sdk.test.ts; Python SDK reproduction not done
+- 2026-10-26T13:07:29Z live bad-key probe via openai-node 6.29.0 on devstack: 8 governed router endpoints 401, variations 404; evidence: evidence/live-router-probe-badkey.txt
+- 2026-10-26T13:07:29Z pnpm commit:check; evidence: evidence/commit-check.log
+- 2026-10-26T13:14:35Z phase3: OpenAI provider /images/generations governed route + test (2 pass); codegen; evidence: evidence/vitest-openai-images.log, evidence/codegen-2.log
+- 2026-10-26T13:18:20Z patch rewritten at 418cd2f5c: 935a927632779706788eb457c5245dac023a088bc9b41da7142448d42830c5f6  t-2087.patch
+- 2026-10-26T13:18:20Z commit 418cd2f5c phase3 OpenAI images route (vitest 111 pass, type-check/lint/knip pass); evidence: evidence/vitest-phase3.log
