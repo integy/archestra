@@ -277,6 +277,8 @@ export const RouteId = {
   OpenAiResponsesCompactWithAgent: "openAiResponsesCompactWithAgent",
   OpenAiEmbeddingsWithDefaultAgent: "openAiEmbeddingsWithDefaultAgent",
   OpenAiEmbeddingsWithAgent: "openAiEmbeddingsWithAgent",
+  OpenAiImagesWithDefaultAgent: "openAiImagesWithDefaultAgent",
+  OpenAiImagesWithAgent: "openAiImagesWithAgent",
   OpenAiListModelsWithDefaultAgent: "openAiListModelsWithDefaultAgent",
   OpenAiListModelsWithAgent: "openAiListModelsWithAgent",
 
