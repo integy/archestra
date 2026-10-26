@@ -2,11 +2,24 @@ import config from "@/config";
 import logger from "@/logging";
 import { TaskModel } from "@/models";
 import * as metrics from "@/observability/metrics";
-import type { InsertTask, Task, TaskHandler, TaskLane } from "@/types";
+import type {
+  InsertTask,
+  Task,
+  TaskHandler,
+  TaskLane,
+  TaskType,
+} from "@/types";
 import { TASK_LANES } from "@/types";
 import PERIODIC_TASK_DEFINITIONS from "./periodic-tasks";
 
 export class TaskQueueService {
+  constructor(
+    private readonly scope?: {
+      taskType: TaskType;
+      taskIds: readonly string[];
+    },
+  ) {}
+
   private handlers = new Map<string, TaskHandler>();
   private pollIntervalId: ReturnType<typeof setInterval> | null = null;
   // Global in-flight set (used for shutdown drain, lane-agnostic).
@@ -237,7 +250,11 @@ export class TaskQueueService {
     if (Date.now() - this.lastStuckSweepAt >= STUCK_SWEEP_INTERVAL_MS) {
       this.lastStuckSweepAt = Date.now();
       // Reset tasks whose worker stopped heartbeating
-      const swept = await TaskModel.resetStuckTasks(STUCK_TASK_TIMEOUT_MS);
+      const swept = await TaskModel.resetStuckTasks(
+        STUCK_TASK_TIMEOUT_MS,
+        this.scope?.taskIds,
+        this.scope?.taskType,
+      );
       if (swept.length > 0) {
         metrics.taskQueue.reportStuckTasksReset(swept.length);
         logger.warn(
@@ -260,7 +277,10 @@ export class TaskQueueService {
     for (const lane of LANES) {
       const cap = this.laneCap(lane);
       while (!this.stopping && this.laneCounts[lane] < cap) {
-        const task = await TaskModel.dequeue(TASK_LANES[lane]);
+        const types = this.scope
+          ? TASK_LANES[lane].filter((type) => type === this.scope?.taskType)
+          : TASK_LANES[lane];
+        const task = await TaskModel.dequeue(types, this.scope?.taskIds);
         if (!task) break; // lane empty — move on to the next lane
 
         // Track immediately so a concurrent stopWorker sees this task.

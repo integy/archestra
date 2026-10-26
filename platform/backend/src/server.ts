@@ -1011,7 +1011,7 @@ const startWebServer = async () => {
 
     // Initialize chatops providers (MS Teams, Slack, etc.)
     // Seeds DB from env vars on first run, then loads config from DB.
-    await chatOpsManager.initialize();
+    if (config.chatops.inboundEnabled) await chatOpsManager.initialize();
 
     // Bring up the ngrok tunnel (if ARCHESTRA_NGROK_AUTH_TOKEN is set) so the
     // instance is reachable from the Internet for inbound chatops webhooks.

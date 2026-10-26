@@ -3884,6 +3884,7 @@ const config = {
     domain: process.env.ARCHESTRA_NGROK_DOMAIN || "",
   },
   chatops: {
+    inboundEnabled: process.env.ARCHESTRA_CHATOPS_INBOUND_ENABLED !== "false",
     // Provider-to-server delivery can use a public listener while the UI and
     // browser OAuth callback stay on the frontend origin.
     webhookBaseUrl: parseChatopsWebhookBaseUrl(

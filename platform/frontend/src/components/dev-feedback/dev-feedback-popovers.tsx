@@ -14,6 +14,7 @@ import {
   type ReactNode,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -70,6 +71,10 @@ export function DraftPopover(props: {
     useState<CreateDevFeedbackCommentBody | null>(null);
   const createComment = useCreateDevFeedbackComment();
   const willAttachClip = attachClip && props.clip !== null;
+  const framePreview = useMemo(
+    () => draft.frame?.toDataURL("image/jpeg") ?? null,
+    [draft.frame],
+  );
 
   const submit = async () => {
     if (!text.trim() || sending) return;
@@ -126,6 +131,13 @@ export function DraftPopover(props: {
       <p className="truncate text-muted-foreground text-xs">
         {route} › {draft.label}
       </p>
+      {framePreview && (
+        <img
+          src={framePreview}
+          alt="Screenshot to attach"
+          className="mt-2 max-h-32 w-full rounded-md object-contain"
+        />
+      )}
       <Textarea
         autoFocus
         rows={2}

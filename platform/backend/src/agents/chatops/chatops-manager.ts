@@ -658,6 +658,7 @@ export class ChatOpsManager {
   }
 
   async initialize(): Promise<void> {
+    if (!config.chatops.inboundEnabled) return;
     // Seed DB from env vars on first run (no-op if DB already has config)
     await this.seedConfigFromEnvVars();
 
