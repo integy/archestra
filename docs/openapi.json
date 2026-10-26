@@ -173630,6 +173630,16 @@
                     "channelName": {
                       "nullable": true,
                       "type": "string"
+                    },
+                    "agentId": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "agentName": {
+                      "nullable": true,
+                      "type": "string"
                     }
                   },
                   "required": [
@@ -173901,6 +173911,12 @@
                   "channelId": {
                     "type": "string",
                     "pattern": "^[CG][A-Z0-9]+$"
+                  },
+                  "agentId": {
+                    "nullable": true,
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                   }
                 },
                 "required": [
@@ -173923,6 +173939,16 @@
                       "type": "boolean"
                     },
                     "channelName": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "agentId": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "agentName": {
                       "nullable": true,
                       "type": "string"
                     }
@@ -174822,6 +174848,34 @@
                       },
                       "createdAt": {
                         "type": "string"
+                      },
+                      "dispatch": {
+                        "type": "object",
+                        "properties": {
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "pending",
+                              "started",
+                              "failed",
+                              "uncertain"
+                            ]
+                          },
+                          "runId": {
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "message": {
+                            "nullable": true,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "status",
+                          "runId",
+                          "message"
+                        ],
+                        "additionalProperties": false
                       }
                     },
                     "required": [
@@ -175130,6 +175184,11 @@
                     "minimum": 0,
                     "maximum": 1
                   },
+                  "submissionId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
                   "text": {
                     "type": "string",
                     "minLength": 1,
@@ -175259,6 +175318,34 @@
                     },
                     "createdAt": {
                       "type": "string"
+                    },
+                    "dispatch": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "pending",
+                            "started",
+                            "failed",
+                            "uncertain"
+                          ]
+                        },
+                        "runId": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "message": {
+                          "nullable": true,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "runId",
+                        "message"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [

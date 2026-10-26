@@ -1,10 +1,18 @@
+import { createHash, randomUUID } from "node:crypto";
 import { TimeInMs } from "@archestra/shared";
 import { WebClient } from "@slack/web-api";
 import { LRUCacheManager } from "@/cache-manager";
 import config from "@/config";
 import logger from "@/logging";
+import AgentModel from "@/models/agent";
+import AgentRunModel from "@/models/agent-run";
+import ChatOpsChannelBindingModel from "@/models/chatops-channel-binding";
 import ChatOpsConfigModel from "@/models/chatops-config";
 import DevFeedbackConfigModel from "@/models/dev-feedback-config";
+import DevFeedbackSubmissionModel from "@/models/dev-feedback-submission";
+import { resolveAgentRuntime } from "@/services/agent-runtime/pod-run";
+import { ResourcePermissions } from "@/services/resource-permissions";
+import { taskQueueService } from "@/task-queue";
 import { ApiError } from "@/types";
 import type {
   CreateDevFeedbackCommentBody,
@@ -13,15 +21,18 @@ import type {
   DevFeedbackChannel,
   DevFeedbackComment,
   DevFeedbackReply,
+  DevFeedbackSetup,
   DevFeedbackSetupStatus,
 } from "@/types/dev-feedback";
+import type { DevFeedbackSubmission } from "@/types/dev-feedback-submission";
 
 /**
- * Internal UI feedback overlay backed by one Slack channel. Slack is the only
- * storage: each comment is a channel message whose message metadata carries
+ * Internal UI feedback overlay backed by one Slack channel. Each comment is
+ * a channel message whose message metadata carries
  * the pin's anchor, its thread holds the discussion, and a ✅ reaction marks
  * it resolved. It posts as one of the chatops Slack bots, so it needs no app
- * of its own; the only thing stored is which bot and channel were picked.
+ * of its own. A delivery ledger preserves authenticated provenance and retry
+ * boundaries for explicit agent dispatch; it never subscribes to bot events.
  */
 class DevFeedbackService {
   private client: WebClient | null = null;
@@ -44,11 +55,33 @@ class DevFeedbackService {
     return config.devFeedback.enabled;
   }
 
-  async getSetupStatus(): Promise<DevFeedbackSetupStatus> {
+  async getSetupStatus(actor: {
+    userId: string;
+    organizationId: string;
+  }): Promise<DevFeedbackSetupStatus> {
     const target = await this.resolveTarget();
+    // SPDX-SnippetBegin
+    // SPDX-SnippetCopyrightText: 2026 Archestra Inc.
+    // SPDX-License-Identifier: LicenseRef-Archestra-Enterprise
+    const maySeeAgent =
+      target?.agentId &&
+      target.organizationId === actor.organizationId &&
+      (await ResourcePermissions.allows({
+        userId: actor.userId,
+        organizationId: actor.organizationId,
+        resource: "agent",
+        scope: target.agentId,
+        action: "use",
+      }));
+    // SPDX-SnippetEnd
     return {
       configured: target !== null,
       channelName: target?.channelName ?? null,
+      ...(maySeeAgent &&
+        target?.agentId && {
+          agentId: target.agentId,
+          agentName: (await AgentModel.findById(target.agentId))?.name ?? null,
+        }),
     };
   }
 
@@ -99,6 +132,8 @@ class DevFeedbackService {
   async saveSetup(params: {
     botId: string;
     channelId: string;
+    agentId?: string | null;
+    actor: { userId: string; organizationId: string };
   }): Promise<DevFeedbackSetupStatus> {
     const bot = await findChatOpsSlackBot(params.botId);
     const client = new WebClient(bot.botToken);
@@ -120,21 +155,95 @@ class DevFeedbackService {
       const channelId = channel.id;
       await callSlack(() => client.conversations.join({ channel: channelId }));
     }
+    let dispatch: Partial<DevFeedbackSetup> = {};
+    if (params.agentId) {
+      const agent = await AgentModel.findById(params.agentId);
+      if (
+        !agent ||
+        agent.organizationId !== params.actor.organizationId ||
+        agent.agentType !== "agent" ||
+        !resolveAgentRuntime(agent)
+      )
+        throw new ApiError(
+          400,
+          "Choose an Agent with Agent Runtime in this organization.",
+        );
+      // SPDX-SnippetBegin
+      // SPDX-SnippetCopyrightText: 2026 Archestra Inc.
+      // SPDX-License-Identifier: LicenseRef-Archestra-Enterprise
+      await ResourcePermissions.require({
+        userId: params.actor.userId,
+        organizationId: params.actor.organizationId,
+        resource: "agent",
+        scope: agent.id,
+        action: "use",
+      });
+      // SPDX-SnippetEnd
+      const identity = await client.auth.test();
+      if (!identity.team_id)
+        throw new ApiError(
+          409,
+          "Slack did not identify the posting workspace.",
+        );
+      const pinned = (await ChatOpsConfigModel.getSlackAgentBots()).find(
+        (candidate) => candidate.appId === params.botId,
+      );
+      if (pinned && pinned.agentId !== agent.id)
+        throw new ApiError(
+          400,
+          "Choose the Agent that owns the selected Slack bot.",
+        );
+      const binding = await ChatOpsChannelBindingModel.findByChannel({
+        provider: "slack",
+        channelId: channel.id,
+        workspaceId: identity.team_id,
+      });
+      if (
+        !binding ||
+        binding.organizationId !== params.actor.organizationId ||
+        binding.isDm ||
+        (!pinned && binding.agentId !== agent.id)
+      )
+        throw new ApiError(
+          409,
+          "Assign this Slack channel to the selected Agent before enabling automatic feedback runs.",
+        );
+      dispatch = {
+        organizationId: params.actor.organizationId,
+        agentId: agent.id,
+        workspaceId: identity.team_id,
+        bindingId: binding.id,
+        ...(pinned && { pinnedAgentId: agent.id }),
+      };
+    }
     await DevFeedbackConfigModel.save({
       botId: bot.appId,
       channelId: channel.id,
       channelName: channel.name,
+      ...dispatch,
     });
     this.historyCache.delete(channel.id);
-    return { configured: true, channelName: channel.name };
+    return {
+      configured: true,
+      channelName: channel.name,
+      ...(params.agentId && {
+        agentId: params.agentId,
+        agentName: (await AgentModel.findById(params.agentId))?.name ?? null,
+      }),
+    };
   }
 
   /** Open comments pinned on a route pattern, oldest first. */
-  async listComments(route: string): Promise<DevFeedbackComment[]> {
-    const { channel } = await this.getTarget();
+  async listComments(
+    route: string,
+    actor: { userId: string; organizationId: string },
+  ): Promise<DevFeedbackComment[]> {
+    const target = await this.resolveTarget();
+    if (!target) throw new ApiError(409, "UI feedback is not set up yet");
+    const channel = target.channelId;
     const messages = await this.getChannelHistory();
     const workspaceUrl = await this.getWorkspaceUrl();
-    return messages
+    const comments = messages
       .filter(
         (message) =>
           message.metadata?.event_type === COMMENT_EVENT_TYPE &&
@@ -144,77 +253,308 @@ class DevFeedbackService {
       .map((message) => toComment({ message, workspaceUrl, channel }))
       .filter((comment): comment is DevFeedbackComment => comment !== null)
       .reverse();
+    const owned = await DevFeedbackSubmissionModel.findOwnedComments({
+      rootTs: comments.map((comment) => comment.id),
+      organizationId: actor.organizationId,
+      actorUserId: actor.userId,
+      target,
+    });
+    const reports = new Map(owned.map((report) => [report.rootTs, report]));
+    return comments.map((comment) => {
+      const report = reports.get(comment.id);
+      return report
+        ? {
+            ...comment,
+            dispatch: submissionComment(report, comment.id).dispatch,
+          }
+        : comment;
+    });
   }
 
   async createComment(params: {
     body: CreateDevFeedbackCommentBody;
     authorName: string;
+    actor: { userId: string; organizationId: string };
   }): Promise<DevFeedbackComment> {
-    const { body, authorName } = params;
-    const { client } = await this.getTarget();
-    const channel = (await this.getTarget()).channel;
-    const anchor: DevFeedbackAnchor = {
-      route: body.route,
-      selector: body.selector,
-      label: body.label,
-      elementX: body.elementX,
-      elementY: body.elementY,
-      viewportX: body.viewportX,
-      viewportY: body.viewportY,
-    };
-
-    const screenshotFileId = body.screenshot
-      ? await this.uploadUnsharedFile({
-          file: body.screenshot,
-          name: "screenshot",
-        })
-      : null;
-    const payload: CommentPayload = {
-      ...anchor,
-      text: body.text,
+    const { body, authorName, actor } = params;
+    const requestHash = createHash("sha256")
+      .update(JSON.stringify({ ...body, submissionId: undefined }))
+      .digest("hex");
+    const id = body.submissionId ?? randomUUID();
+    const existing = await DevFeedbackSubmissionModel.findById(id);
+    if (existing) {
+      if (
+        existing.actorUserId !== actor.userId ||
+        existing.organizationId !== actor.organizationId ||
+        existing.requestHash !== requestHash
+      )
+        throw new ApiError(
+          409,
+          "This submission id is already in use. Keep the original report unchanged when retrying.",
+        );
+      return this.reconcileSubmission(existing);
+    }
+    const target = await this.resolveTarget();
+    if (!target) throw new ApiError(409, "UI feedback is not set up yet");
+    if (target.agentId && target.organizationId !== actor.organizationId)
+      throw new ApiError(
+        403,
+        "This feedback target belongs to another organization.",
+      );
+    const claimed = await DevFeedbackSubmissionModel.create({
+      id,
+      organizationId: actor.organizationId,
+      actorUserId: actor.userId,
       authorName,
-      url: onThisDeployment(body.url),
-      ...(screenshotFileId ? { screenshotFileId } : {}),
-    };
-    const { ts, payload: posted } = await this.postComment(payload);
-    // The link that opens this exact comment needs the message ts, which
-    // exists only once the message does.
-    await this.updateComment({ ts, payload: posted }).catch((error) =>
-      logger.warn({ err: error }, "[DevFeedback] Failed to add comment link"),
-    );
+      requestHash,
+      body,
+      target: withoutToken(target),
+    });
+    if (!claimed.created || !claimed.report)
+      throw new ApiError(
+        409,
+        "This report is being posted. Retry with the same submission id.",
+      );
+    const client = new WebClient(target.token, {
+      retryConfig: { retries: 0 },
+      rejectRateLimitedCalls: true,
+    });
+    let rootTs: string | null = null;
+    try {
+      const screenshotFileId = body.screenshot
+        ? await this.uploadUnsharedFile({
+            file: body.screenshot,
+            name: "screenshot",
+            client,
+          })
+        : null;
+      const payload: CommentPayload = {
+        ...feedbackAnchor(body),
+        text: body.text,
+        authorName,
+        url: onThisDeployment(body.url),
+        submissionId: id,
+        ...(screenshotFileId ? { screenshotFileId } : {}),
+      };
+      const posted = await this.postComment(payload, {
+        client,
+        channel: target.channelId,
+      });
+      rootTs = posted.ts;
+      const workspaceUrl = await this.workspaceUrlFor(client);
+      const permalink = buildPermalink({
+        workspaceUrl,
+        channel: target.channelId,
+        ts: rootTs,
+      });
+      // This commits the root plus dispatch intent even if a later upload or response fails.
+      await DevFeedbackSubmissionModel.recordRoot({
+        id,
+        rootTs,
+        permalink,
+        screenshot: posted.payload.screenshotFileId
+          ? "uploaded"
+          : body.screenshot
+            ? "unavailable"
+            : "absent",
+      });
+      await client.chat
+        .update({
+          ...renderComment({ ts: rootTs, payload: posted.payload }),
+          channel: target.channelId,
+          ts: rootTs,
+        })
+        .catch((error) =>
+          logger.warn(
+            { err: error },
+            "[DevFeedback] Failed to add comment link",
+          ),
+        );
+      let clipOutcome: "uploaded" | "unavailable" | "absent" = body.clip
+        ? "unavailable"
+        : "absent";
+      if (body.clip) {
+        try {
+          await client.filesUploadV2({
+            channel_id: target.channelId,
+            thread_ts: rootTs,
+            file_uploads: [
+              {
+                file: Buffer.from(body.clip.base64, "base64"),
+                filename: `clip.${extensionFor(body.clip.mimeType)}`,
+              },
+            ],
+          });
+          clipOutcome = "uploaded";
+        } catch (error) {
+          logger.warn({ err: error }, "[DevFeedback] Failed to upload clip");
+        }
+      }
+      await DevFeedbackSubmissionModel.finishDelivery(id, {
+        screenshot: posted.payload.screenshotFileId
+          ? "uploaded"
+          : body.screenshot
+            ? "unavailable"
+            : "absent",
+        clip: clipOutcome,
+      });
+      taskQueueService.wake();
+      this.historyCache.delete(target.channelId);
+      return submissionComment(
+        (await DevFeedbackSubmissionModel.findById(id)) ?? claimed.report,
+        rootTs,
+      );
+    } catch (error) {
+      if (!rootTs) {
+        await DevFeedbackSubmissionModel.markDeliveryUncertain(id);
+        throw error;
+      }
+      // Delivery succeeded; retries reconcile this report's Slack root and dispatch without reposting.
+      logger.warn(
+        { err: error, reportId: id },
+        "[DevFeedback] Report posted; dispatch bookkeeping will reconcile",
+      );
+      return {
+        ...feedbackAnchor(body),
+        id: rootTs,
+        text: body.text,
+        authorName,
+        replyCount: 0,
+        permalink: null,
+        createdAt: tsToIso(rootTs),
+        ...(target.agentId && {
+          dispatch: {
+            status: "uncertain",
+            runId: null,
+            message:
+              "Posted to Slack. Agent startup could not be confirmed; retry this same report to check its status.",
+          },
+        }),
+      };
+    }
+  }
 
-    // The clip goes into the thread: Slack shows only images inline in a
-    // message, and an upload posted on its own cannot carry the metadata the
-    // overlay reads pins from.
-    if (body.clip) {
-      try {
-        await client.filesUploadV2({
-          channel_id: channel,
-          thread_ts: ts,
-          file_uploads: [
-            {
-              file: Buffer.from(body.clip.base64, "base64"),
-              filename: `clip.${extensionFor(body.clip.mimeType)}`,
-            },
-          ],
+  private async reconcileSubmission(
+    report: DevFeedbackSubmission,
+  ): Promise<DevFeedbackComment> {
+    if (report.rootTs) return submissionComment(report, report.rootTs);
+    // A concurrent request still owns the posting attempt; it must not race a second post.
+    if (
+      report.deliveryStatus === "posting" &&
+      Date.now() - report.updatedAt.getTime() < 120_000
+    )
+      throw new ApiError(
+        409,
+        "This report is still being posted. Retry with the same submission id.",
+      );
+    const bot = await findChatOpsSlackBot(report.target.botId);
+    const client = new WebClient(bot.botToken);
+    const identity = await client.auth.test();
+    if (
+      !identity.bot_id ||
+      (report.target.workspaceId &&
+        identity.team_id !== report.target.workspaceId)
+    )
+      throw new ApiError(
+        409,
+        "The original posting bot or workspace can no longer be verified.",
+      );
+    let cursor: string | undefined;
+    for (let page = 0; page < 5; page++) {
+      const history = await client.conversations.history({
+        channel: report.target.channelId,
+        include_all_metadata: true,
+        oldest: String(Math.floor(report.createdAt.getTime() / 1000) - 60),
+        limit: 200,
+        cursor,
+      });
+      const found = (history.messages as SlackMessage[] | undefined)?.find(
+        (message) =>
+          message.bot_id === identity.bot_id &&
+          message.metadata?.event_type === COMMENT_EVENT_TYPE &&
+          message.metadata.event_payload?.submissionId === report.id &&
+          message.metadata.event_payload?.authorName === report.authorName,
+      );
+      if (found?.ts) {
+        await DevFeedbackSubmissionModel.recordRoot({
+          id: report.id,
+          rootTs: found.ts,
+          permalink: buildPermalink({
+            workspaceUrl: await this.workspaceUrlFor(client),
+            channel: report.target.channelId,
+            ts: found.ts,
+          }),
+          screenshot: found.metadata?.event_payload?.screenshotFileId
+            ? "uploaded"
+            : report.body.screenshot
+              ? "unavailable"
+              : "absent",
         });
+        await DevFeedbackSubmissionModel.finishDelivery(report.id, {
+          screenshot: found.metadata?.event_payload?.screenshotFileId
+            ? "uploaded"
+            : report.body.screenshot
+              ? "unavailable"
+              : "absent",
+          clip: report.body.clip ? "unknown" : "absent",
+        });
+        taskQueueService.wake();
+        const reconciled = await DevFeedbackSubmissionModel.findById(report.id);
+        if (reconciled) return submissionComment(reconciled, found.ts);
+      }
+      cursor = history.response_metadata?.next_cursor || undefined;
+      if (!cursor) break;
+    }
+    throw new ApiError(
+      409,
+      "Slack delivery remains uncertain. No replacement was posted. Check the feedback channel before submitting a new report.",
+    );
+  }
+
+  private async workspaceUrlFor(client: WebClient): Promise<string | null> {
+    try {
+      return (await client.auth.test()).url ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  async reconcilePendingSubmissions(): Promise<void> {
+    if (!this.isAvailable) return;
+    for (const report of await DevFeedbackSubmissionModel.findStaleDeliveries()) {
+      try {
+        if (report.rootTs)
+          await DevFeedbackSubmissionModel.finishDelivery(
+            report.id,
+            report.media,
+          );
+        else await this.reconcileSubmission(report);
       } catch (error) {
-        // The comment is already posted; a failed upload must not lose it.
-        logger.warn({ err: error }, "[DevFeedback] Failed to upload clip");
+        await DevFeedbackSubmissionModel.deferDeliveryReconciliation(
+          report.id,
+          report.updatedAt,
+        );
+        logger.warn(
+          { err: error, reportId: report.id },
+          "[DevFeedback] Delivery remains uncertain; no report was reposted",
+        );
       }
     }
-
-    this.historyCache.delete((await this.getTarget()).channel);
-    const workspaceUrl = await this.getWorkspaceUrl();
-    return {
-      ...anchor,
-      id: ts,
-      text: body.text,
-      authorName,
-      replyCount: 0,
-      permalink: buildPermalink({ workspaceUrl, channel, ts }),
-      createdAt: tsToIso(ts),
-    };
+    for (const report of await DevFeedbackSubmissionModel.findOrphanedDispatches()) {
+      const run = report.runtimeTaskId
+        ? await AgentRunModel.findByTaskId(report.runtimeTaskId)
+        : null;
+      await DevFeedbackSubmissionModel.settleOrphanedDispatch({
+        id: report.id,
+        observedAt: report.updatedAt,
+        status: run ? "started" : report.runtimeTaskId ? "uncertain" : "failed",
+        message: run
+          ? null
+          : report.runtimeTaskId
+            ? "Posted to Slack. The launch worker stopped after reserving a task, and no runtime could be confirmed. Inspect the linked run before starting a replacement; no new run was launched."
+            : "Posted to Slack. The dispatch worker stopped before starting an Agent, and its queued job is no longer active. No replacement report or run was started.",
+      });
+    }
   }
 
   async listReplies(commentId: string): Promise<DevFeedbackReply[]> {
@@ -309,8 +649,9 @@ class DevFeedbackService {
   private async uploadUnsharedFile(params: {
     file: { mimeType: string; base64: string };
     name: string;
+    client?: WebClient;
   }): Promise<string | null> {
-    const { client } = await this.getTarget();
+    const client = params.client ?? (await this.getTarget()).client;
     const bytes = Buffer.from(params.file.base64, "base64");
     try {
       const { file_id: fileId, upload_url: uploadUrl } =
@@ -339,18 +680,24 @@ class DevFeedbackService {
    */
   private async postComment(
     payload: CommentPayload,
+    target: { client: WebClient; channel: string },
   ): Promise<{ ts: string; payload: CommentPayload }> {
-    const { client } = await this.getTarget();
+    const { client, channel } = target;
     if (payload.screenshotFileId) {
       for (let attempt = 1; attempt <= IMAGE_POST_ATTEMPTS; attempt++) {
         try {
-          const posted = await client.chat.postMessage({
+          const postArgs: Parameters<WebClient["chat"]["postMessage"]>[0] & {
+            client_msg_id?: string;
+          } = {
             ...renderComment({ payload, ts: null }),
-            channel: (await this.getTarget()).channel,
+            channel,
             unfurl_links: false,
             unfurl_media: false,
-          });
+            client_msg_id: payload.submissionId,
+          };
+          const posted = await client.chat.postMessage(postArgs);
           if (posted.ts) return { ts: posted.ts, payload };
+          throw new Error("Slack did not return a message ts");
         } catch (error) {
           if (slackErrorCode(error) !== "invalid_blocks") throw error;
           await sleep(IMAGE_RETRY_DELAY_MS);
@@ -361,12 +708,16 @@ class DevFeedbackService {
       );
     }
     const { screenshotFileId: _, ...textOnly } = payload;
-    const posted = await client.chat.postMessage({
+    const postArgs: Parameters<WebClient["chat"]["postMessage"]>[0] & {
+      client_msg_id?: string;
+    } = {
       ...renderComment({ payload: textOnly, ts: null }),
-      channel: (await this.getTarget()).channel,
+      channel,
       unfurl_links: false,
       unfurl_media: false,
-    });
+      client_msg_id: payload.submissionId,
+    };
+    const posted = await client.chat.postMessage(postArgs);
     if (!posted.ts) throw new Error("Slack did not return a message ts");
     return { ts: posted.ts, payload: textOnly };
   }
@@ -406,9 +757,8 @@ class DevFeedbackService {
     );
     if (!bot) return null;
     return {
+      ...setup,
       token: bot.botToken,
-      channelId: setup.channelId,
-      channelName: setup.channelName,
     };
   }
 
@@ -488,7 +838,7 @@ const PRIVATE_CHANNEL_HINT =
 /** Up to 5,000 channels; a workspace with more can still pick by search. */
 const MAX_CHANNEL_PAGES = 5;
 
-type ResolvedTarget = { token: string; channelId: string; channelName: string };
+type ResolvedTarget = DevFeedbackSetup & { token: string };
 
 /** Every enabled chatops Slack bot: the main app and the per-agent apps. */
 async function listChatOpsSlackBots(): Promise<
@@ -541,9 +891,11 @@ type CommentPayload = DevFeedbackAnchor & {
   url?: string;
   screenshotFileId?: string;
   resolvedBy?: string;
+  submissionId?: string;
 };
 
 type SlackMessage = {
+  bot_id?: string;
   ts?: string;
   text?: string;
   user?: string;
@@ -699,4 +1051,46 @@ function slackErrorCode(error: unknown): string | undefined {
   if (typeof error !== "object" || error === null) return undefined;
   const data = (error as { data?: { error?: unknown } }).data;
   return typeof data?.error === "string" ? data.error : undefined;
+}
+
+function feedbackAnchor(body: CreateDevFeedbackCommentBody): DevFeedbackAnchor {
+  return {
+    route: body.route,
+    selector: body.selector,
+    label: body.label,
+    elementX: body.elementX,
+    elementY: body.elementY,
+    viewportX: body.viewportX,
+    viewportY: body.viewportY,
+  };
+}
+
+function withoutToken(target: ResolvedTarget): DevFeedbackSetup {
+  const { token: _token, ...saved } = target;
+  return saved;
+}
+
+function submissionComment(
+  report: DevFeedbackSubmission,
+  rootTs: string,
+): DevFeedbackComment {
+  return {
+    ...feedbackAnchor(report.body),
+    id: rootTs,
+    text: report.body.text,
+    authorName: report.authorName,
+    replyCount: 0,
+    permalink: report.permalink,
+    createdAt: tsToIso(rootTs),
+    ...(report.dispatchStatus !== "disabled" && {
+      dispatch: {
+        status:
+          report.dispatchStatus === "launching"
+            ? "pending"
+            : report.dispatchStatus,
+        runId: report.runtimeTaskId,
+        message: report.lastError,
+      },
+    }),
+  };
 }

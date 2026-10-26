@@ -6,7 +6,11 @@ import {
 import { z } from "zod";
 import { schema } from "@/database";
 
-export type TaskHandlerContext = { taskId: string };
+export type TaskHandlerContext = {
+  taskId: string;
+  attempt?: number;
+  maxAttempts?: number;
+};
 export type TaskHandler = (
   payload: Record<string, unknown>,
   context: TaskHandlerContext,
@@ -48,6 +52,8 @@ export const TaskTypeSchema = z.enum([
   "openappa_unenforced_cleanup",
   "llm_model_sync",
   "agent_run_attention_notice",
+  "dev_feedback_dispatch",
+  "dev_feedback_reconcile",
 ]);
 export type TaskType = z.infer<typeof TaskTypeSchema>;
 
@@ -107,6 +113,8 @@ export const TASK_LANES = {
     "openappa_unenforced_cleanup",
     "llm_model_sync",
     "agent_run_attention_notice",
+    "dev_feedback_dispatch",
+    "dev_feedback_reconcile",
   ],
 } as const satisfies Record<string, TaskType[]>;
 

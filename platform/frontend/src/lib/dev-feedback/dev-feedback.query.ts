@@ -1,6 +1,7 @@
 import { archestraApiSdk, type archestraApiTypes } from "@archestra/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { devFeedbackDispatchMessage } from "@/lib/dev-feedback/dispatch-status";
 import { handleApiError, throwOnApiError, toApiError } from "@/lib/utils/api";
 
 export type DevFeedbackComment =
@@ -16,7 +17,14 @@ export function useDevFeedbackSetup() {
     queryFn: async () => {
       const { data, error } = await archestraApiSdk.getDevFeedbackSetup();
       throwOnApiError(error, { toastOnError: false });
-      return data ?? { configured: false, channelName: null };
+      return (
+        data ?? {
+          configured: false,
+          channelName: null,
+          agentId: null,
+          agentName: null,
+        }
+      );
     },
   });
 }
@@ -50,7 +58,9 @@ export function useDevFeedbackChannels(botId: string | null) {
 export function useSaveDevFeedbackSetup() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (body: { botId: string; channelId: string }) => {
+    mutationFn: async (
+      body: archestraApiTypes.SaveDevFeedbackSetupData["body"],
+    ) => {
       const { data, error } = await archestraApiSdk.saveDevFeedbackSetup({
         body,
       });
@@ -82,6 +92,12 @@ export function useDevFeedbackComments(params: {
     },
     enabled: params.enabled,
     staleTime: 20 * 1000,
+    refetchInterval: (query) =>
+      query.state.data?.some(
+        (comment) => comment.dispatch?.status === "pending",
+      )
+        ? 2000
+        : false,
   });
 }
 
@@ -115,6 +131,9 @@ export function useCreateDevFeedbackComment() {
     onSuccess: (comment) => {
       queryClient.invalidateQueries({ queryKey: devFeedbackKeys.all });
       toast.success("Posted to Slack", {
+        description: comment.dispatch
+          ? devFeedbackDispatchMessage(comment.dispatch)
+          : undefined,
         action: comment.permalink
           ? {
               label: "Open",

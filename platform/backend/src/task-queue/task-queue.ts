@@ -29,6 +29,14 @@ export class TaskQueueService {
     logger.debug({ taskType }, "[TaskQueue] Handler registered");
   }
 
+  /** Prompt an already-running worker to poll for newly committed jobs. */
+  wake(): void {
+    if (!this.pollIntervalId || this.stopping) return;
+    void this.poll().catch((error) =>
+      logger.warn({ error }, "[TaskQueue] Wake failed; polling will retry"),
+    );
+  }
+
   async enqueue(params: {
     taskType: InsertTask["taskType"];
     payload: Record<string, unknown>;
@@ -362,6 +370,8 @@ export class TaskQueueService {
     try {
       await handler(task.payload as Record<string, unknown>, {
         taskId: task.id,
+        attempt: task.attempt,
+        maxAttempts: task.maxAttempts,
       });
       await TaskModel.complete(task.id);
       const durationSeconds = (Date.now() - startTime) / 1000;

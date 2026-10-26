@@ -28,6 +28,13 @@ export const DevFeedbackCommentSchema = DevFeedbackAnchorSchema.extend({
   replyCount: z.number(),
   permalink: z.string().nullable(),
   createdAt: z.string(),
+  dispatch: z
+    .object({
+      status: z.enum(["pending", "started", "failed", "uncertain"]),
+      runId: z.string().nullable(),
+      message: z.string().nullable(),
+    })
+    .optional(),
 });
 
 export const DevFeedbackReplySchema = z.object({
@@ -39,6 +46,8 @@ export const DevFeedbackReplySchema = z.object({
 
 export const CreateDevFeedbackCommentBodySchema =
   DevFeedbackAnchorSchema.extend({
+    /** Keep this id when retrying a submission whose response was lost. */
+    submissionId: z.string().uuid().optional(),
     text: z.string().trim().min(1).max(4000),
     /** The concrete page URL the comment was made on. */
     url: z.string().max(2048),
@@ -50,16 +59,23 @@ export const CreateDevFeedbackCommentBodySchema =
   });
 
 /** The saved choice of bot and channel. Holds no credential. */
-const DevFeedbackSetupSchema = z.object({
+export const DevFeedbackSetupSchema = z.object({
   /** Slack app id of a chatops bot (the main one or an agent's). */
   botId: z.string(),
   channelId: z.string(),
   channelName: z.string(),
+  organizationId: z.string().optional(),
+  agentId: z.string().uuid().nullable().optional(),
+  workspaceId: z.string().optional(),
+  bindingId: z.string().uuid().optional(),
+  pinnedAgentId: z.string().uuid().optional(),
 });
 
 export const DevFeedbackSetupStatusSchema = z.object({
   configured: z.boolean(),
   channelName: z.string().nullable(),
+  agentId: z.string().uuid().nullable().optional(),
+  agentName: z.string().nullable().optional(),
 });
 
 export const DevFeedbackBotSchema = z.object({
@@ -76,6 +92,7 @@ export const DevFeedbackChannelSchema = z.object({
 export const SaveDevFeedbackSetupBodySchema = z.object({
   botId: z.string().min(1).max(64),
   channelId: z.string().regex(/^[CG][A-Z0-9]+$/),
+  agentId: z.string().uuid().nullable().optional(),
 });
 
 export type DevFeedbackAnchor = z.infer<typeof DevFeedbackAnchorSchema>;

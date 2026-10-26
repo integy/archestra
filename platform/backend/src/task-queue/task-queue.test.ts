@@ -118,7 +118,7 @@ describe("TaskQueueService", () => {
 
       expect(handler).toHaveBeenCalledWith(
         { connectorId: "conn-99" },
-        { taskId: task.id },
+        { taskId: task.id, attempt: 1, maxAttempts: task.maxAttempts },
       );
       expect((await getTask(task.id))?.status).toBe("completed");
     });
