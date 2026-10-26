@@ -352,6 +352,7 @@ describe("feedback delivery and direct dispatch", () => {
     const agent = await makeInternalAgent({
       organizationId: ctx.organizationId,
       authorId: ctx.user.id,
+      systemPrompt: "Use the configured agent workflow.",
       modelId: model.id,
       llmApiKeyId: key.id,
       runtime: {
@@ -472,6 +473,16 @@ describe("feedback delivery and direct dispatch", () => {
         ?.fileData.toString(),
     ).toBe("recording-bytes");
     expect(stage).toHaveBeenCalledOnce();
+    const launchSpec = launch.mock.calls[0][0];
+    expect(
+      launchSpec.secretEnv.ARCHESTRA_AGENT_RUNTIME_SYSTEM_PROMPT,
+    ).toContain("Use the configured agent workflow.");
+    expect(launchSpec.secretEnv.ARCHESTRA_AGENT_RUNTIME_TASK).toContain(
+      "New UI feedback is available. Use your existing agent and channel instructions.",
+    );
+    expect(launchSpec.secretEnv.ARCHESTRA_AGENT_RUNTIME_TASK).not.toContain(
+      "Preserve its full context when creating or updating work.",
+    );
     expect(JSON.stringify(launch.mock.calls[0][0])).toContain(
       "Accordion opens the wrong row",
     );

@@ -52,7 +52,6 @@ export async function handleDevFeedbackDispatch(
   try {
     const result = await chatOpsManager.dispatchFeedbackReport({
       report: claimed,
-      message: reportMessage(claimed),
       attachments: reportAttachments(claimed),
       onTaskCreated: async (taskId) => {
         if (
@@ -106,16 +105,6 @@ export async function handleDevFeedbackDispatch(
     });
     throw error;
   }
-}
-
-function reportMessage(report: DevFeedbackSubmission): string {
-  return [
-    `Handle this UI feedback report from ${report.authorName}. Preserve its full context when creating or updating work.`,
-    `Report: ${report.id}\nPage: ${report.body.url}\nRoute: ${report.body.route}\nElement: ${report.body.label}\nSelector: ${report.body.selector}\nViewport: ${report.body.viewport}`,
-    `Slack thread: ${report.permalink ?? report.rootTs}`,
-    `Original report:\n${report.body.text}`,
-    `Slack media delivery: screenshot=${report.media.screenshot}; recording=${report.media.clip}. Original supplied media are staged below even if Slack could not display them. A recording file being present does not establish that you can interpret video. Explain missing or unsupported media instead of guessing.`,
-  ].join("\n\n");
 }
 
 function reportAttachments(report: DevFeedbackSubmission): A2AAttachment[] {
