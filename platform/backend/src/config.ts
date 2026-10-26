@@ -3430,6 +3430,13 @@ const config = {
   production: isProduction,
   environment,
   llmProxy: {
+    // BETA gate for model pools: hides the page and its API, and keeps the
+    // proxy and the Model Router from resolving a model name to a pool. Off
+    // by default; a blank value falls back to the ARCHESTRA_BETA master switch
+    // (see betaFeatureEnabled).
+    modelPoolsEnabled: betaFeatureEnabled(
+      process.env.ARCHESTRA_LLM_MODEL_POOLS_ENABLED,
+    ),
     usageAccountingMode: parseUsageAccountingMode(
       process.env.ARCHESTRA_LLM_PROXY_USAGE_ACCOUNTING_MODE,
     ),
@@ -3868,8 +3875,8 @@ const config = {
   /**
    * Internal UI feedback overlay for the team's own deployments: pin a comment
    * on an element and post it, with a screenshot and an optional screen clip,
-   * to a Slack channel. Slack is the only storage. It posts as a chatops
-   * Slack bot; which one, and the channel, are picked in the UI on first use.
+   * to a Slack channel. A database ledger tracks delivery and optional agent
+   * dispatch. The posting bot, channel and reviewing agent are picked in the UI.
    */
   devFeedback: {
     enabled: process.env.ARCHESTRA_DEV_FEEDBACK_ENABLED === "true",
