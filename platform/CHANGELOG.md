@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.4.8](https://github.com/archestra-ai/archestra/compare/platform-v1.4.7...platform-v1.4.8) (2026-10-27)
+
+
+### Features
+
+* **agent-runtime:** run and ship a project from the public agent image (backport release/1.4) ([#9480](https://github.com/archestra-ai/archestra/issues/9480)) ([dd6e64b](https://github.com/archestra-ai/archestra/commit/dd6e64bd25b13cb3896df4681994bf37767f0818))
+
+
+### Bug Fixes
+
+* **chat:** let the Azure proxy select the upstream API version (backport release/1.4) ([#9675](https://github.com/archestra-ai/archestra/issues/9675)) ([ac1928d](https://github.com/archestra-ai/archestra/commit/ac1928dd779ce4fe8a295f95db4272718089d8f1))
+* **connect:** backport Windows BOM handling and launcher diagnostics to release/1.4 ([#9682](https://github.com/archestra-ai/archestra/issues/9682)) ([903e82d](https://github.com/archestra-ai/archestra/commit/903e82d0911ccbe9711561b3a9421af79ca75a48))
+* **connections:** register skills under the marketplace name the user cloned (backport release/1.4) ([#9707](https://github.com/archestra-ai/archestra/issues/9707)) ([9ed9674](https://github.com/archestra-ai/archestra/commit/9ed9674ec10d047614036fddc68801de0d8f4122))
+* **connect:** show the connected card only for the agent that connected (backport release/1.4) ([#9703](https://github.com/archestra-ai/archestra/issues/9703)) ([f372fed](https://github.com/archestra-ai/archestra/commit/f372fed2bf28313cfb90e551036abfb0fbb3d4ac))
+* **opencode:** backport Windows UTF-8 runtime transport to release/1.4 ([#9688](https://github.com/archestra-ai/archestra/issues/9688)) ([ae329ad](https://github.com/archestra-ai/archestra/commit/ae329adc542fa079d4ea90b9db0c505f133cedcb))
+* **runs:** replay a recording's resizes as tmux resized the pane (backport release/1.4) ([#9670](https://github.com/archestra-ai/archestra/issues/9670)) ([63c995a](https://github.com/archestra-ai/archestra/commit/63c995a6f3976edee41d12b06fe380a0953b6e17))
+
 ## [1.4.7](https://github.com/archestra-ai/archestra/compare/platform-v1.4.6...platform-v1.4.7) (2026-10-26)
 
 
