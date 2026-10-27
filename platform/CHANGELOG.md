@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0-rc.12](https://github.com/archestra-ai/archestra/compare/platform-v1.5.0-rc.11...platform-v1.5.0-rc.12) (2026-10-27)
+
+
+### Bug Fixes
+
+* accept current IANA time zone names browsers report ([#9712](https://github.com/archestra-ai/archestra/issues/9712)) ([ab80469](https://github.com/archestra-ai/archestra/commit/ab8046920f4d9bdacdcb464dc14f8f16ff1f25a8))
+
 ## [1.5.0-rc.11](https://github.com/archestra-ai/archestra/compare/platform-v1.5.0-rc.10...platform-v1.5.0-rc.11) (2026-10-27)
 
 
